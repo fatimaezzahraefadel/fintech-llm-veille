@@ -1,0 +1,70 @@
+version: "3.9"
+
+# Stack de développement sans Airflow (démarrage rapide)
+# Usage: docker-compose -f docker-compose.dev.yml up --build
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fintech}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fintech_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-fintech_veille}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"  # Ports 5432 et 5433 déjà utilisés par d'autres projets
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-fintech}"]
+      interval: 5s
+      retries: 5
+      start_period: 5s
+
+  # ─── FastAPI ────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres  # Nom interne Docker (pas localhost)
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-fintech_veille}
+      POSTGRES_USER: ${POSTGRES_USER:-fintech}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fintech_secret}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      NEWSAPI_KEY: ${NEWSAPI_KEY}
+      ALPHA_VANTAGE_KEY: ${ALPHA_VANTAGE_KEY}
+      CHROMA_PERSIST_DIR: /app/data/chromadb
+      WATCHED_TICKERS: ${WATCHED_TICKERS:-AAPL,MSFT,GOOGL,AMZN,NVDA}
+      ENVIRONMENT: development
+    volumes:
+      - ./data:/app/data
+      - ./src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  # ─── Streamlit ──────────────────────────────────────────────────────────────
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: streamlit run app/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE_URL: http://api:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      - api
+    restart: on-failure
+
+volumes:
+  postgres_data:
